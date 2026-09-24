@@ -46,7 +46,7 @@ help:
 	@echo "  make destroy-bootstrap - Destroy bootstrap (after envs are destroyed)"
 	@echo ""
 	@echo "Maintenance:"
-	@echo "  make clean            - Clean .terraform directories and lock files"
+	@echo "  make clean            - Clean .terraform directories"
 	@echo ""
 	@echo "Environment variables:"
 	@echo "  AUTO_APPROVE=1        - Add -auto-approve -input=false to apply/destroy"
@@ -70,7 +70,7 @@ doctor:
 bootstrap:
 	@echo "Deploying bootstrap stack (state backend + OIDC + IAM)..."
 	@cd bootstrap && terraform init
-	@cd bootstrap && terraform apply
+	@cd bootstrap && terraform apply $(AUTO_APPROVE_FLAG)
 	@echo ""
 	@echo "✅ Bootstrap complete!"
 	@echo ""
@@ -145,6 +145,5 @@ smoke:
 clean:
 	@echo "Cleaning temporary files..."
 	@find . -type d -name .terraform -exec rm -rf {} + 2>/dev/null || true
-	@find . -type f -name .terraform.lock.hcl -delete 2>/dev/null || true
 	@find . -type f -name "terraform.tfstate*" -not -path "*/bootstrap/*" -delete 2>/dev/null || true
 	@echo "Clean complete."

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-09-24
+
+### Fixed
+- **Bootstrap auto-approve support**: `AUTO_APPROVE=1 make bootstrap` now correctly passes `-auto-approve -input=false` to terraform apply. Previously the bootstrap target ignored the AUTO_APPROVE flag, causing "Error: error asking for approval: EOF" when run unattended. Found in live test of v0.1.1 on arm64 Mac.
+- **make clean**: No longer deletes committed `.terraform.lock.hcl` files. These lock files are intentionally version-controlled and should not be removed by clean. Updated help text to match.
+
 ## [0.1.1] - 2026-09-24
 
 ### Fixed
