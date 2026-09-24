@@ -96,13 +96,16 @@ resource "aws_iam_role" "github_apply" {
         }
         Action = "sts:AssumeRoleWithWebIdentity"
         Condition = {
-          StringEquals = {
-            "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-          }
-          StringLike = {
-            # Scope to GitHub Environment for stage/prod, or main branch for dev
-            "token.actions.githubusercontent.com:sub" = each.key == "dev" ? "repo:${local.repo_full}:ref:refs/heads/main" : "repo:${local.repo_full}:environment:${each.key}"
-          }
+          StringEquals = merge(
+            {
+              "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+            },
+            each.key == "dev" ? {
+              "token.actions.githubusercontent.com:sub" = "repo:${local.repo_full}:ref:refs/heads/main"
+              } : {
+              "token.actions.githubusercontent.com:sub" = "repo:${local.repo_full}:environment:${each.key}"
+            }
+          )
         }
       }
     ]

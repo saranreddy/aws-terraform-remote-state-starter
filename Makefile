@@ -1,5 +1,16 @@
 .PHONY: help doctor bootstrap backend-configs init-dev init-stage init-prod plan-dev plan-stage plan-prod apply-dev apply-stage apply-prod destroy-dev destroy-stage destroy-prod destroy-bootstrap smoke clean
 
+# Auto-approve flags
+AUTO_APPROVE_FLAG =
+ifeq ($(AUTO_APPROVE),1)
+	AUTO_APPROVE_FLAG = -auto-approve -input=false
+endif
+
+# Force mode implies auto-approve for destroy operations
+ifeq ($(FORCE),1)
+	AUTO_APPROVE_FLAG = -auto-approve -input=false
+endif
+
 help:
 	@echo "AWS Terraform Remote State Starter - Makefile targets"
 	@echo ""
@@ -37,20 +48,21 @@ help:
 	@echo "Maintenance:"
 	@echo "  make clean            - Clean .terraform directories and lock files"
 	@echo ""
-	@echo "Variable overrides:"
-	@echo "  ENV=dev|stage|prod    - Target environment (for shortcuts)"
+	@echo "Environment variables:"
+	@echo "  AUTO_APPROVE=1        - Add -auto-approve -input=false to apply/destroy"
+	@echo "  FORCE=1               - Skip confirmations + auto-approve destroy operations"
+	@echo "  CI=true               - Skip confirmations (for CI environments)"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make bootstrap"
+	@echo "  make backend-configs"
 	@echo "  make init-dev"
-	@echo "  make apply-dev"
+	@echo "  AUTO_APPROVE=1 make apply-dev"
 	@echo "  make smoke"
 	@echo ""
 	@echo "Teardown sequence:"
-	@echo "  make destroy-dev"
-	@echo "  make destroy-stage"
-	@echo "  make destroy-prod"
-	@echo "  make destroy-bootstrap"
+	@echo "  FORCE=1 make destroy-dev"
+	@echo "  FORCE=1 make destroy-bootstrap"
 
 doctor:
 	@bash scripts/doctor.sh
@@ -92,37 +104,39 @@ plan-prod:
 	@cd environments/prod && terraform plan
 
 apply-dev:
-	@cd environments/dev && terraform apply
+	@cd environments/dev && terraform apply $(AUTO_APPROVE_FLAG)
 
 apply-stage:
-	@cd environments/stage && terraform apply
+	@cd environments/stage && terraform apply $(AUTO_APPROVE_FLAG)
 
 apply-prod:
-	@cd environments/prod && terraform apply
+	@cd environments/prod && terraform apply $(AUTO_APPROVE_FLAG)
 
 destroy-dev:
 	@echo "⚠️  Destroying dev environment..."
-	@cd environments/dev && terraform destroy
+	@cd environments/dev && terraform destroy $(AUTO_APPROVE_FLAG)
 
 destroy-stage:
 	@echo "⚠️  Destroying stage environment..."
-	@cd environments/stage && terraform destroy
+	@cd environments/stage && terraform destroy $(AUTO_APPROVE_FLAG)
 
 destroy-prod:
 	@echo "⚠️  Destroying prod environment..."
-	@cd environments/prod && terraform destroy
+	@cd environments/prod && terraform destroy $(AUTO_APPROVE_FLAG)
 
 destroy-bootstrap:
 	@echo "⚠️  WARNING: This will destroy the state backend and all IAM roles!"
 	@echo "⚠️  Make sure all environments are destroyed first."
 	@echo ""
-	@read -p "Type 'yes' to proceed: " confirm && [ "$$confirm" = "yes" ] || (echo "Aborted." && exit 1)
+	@if [ "$$FORCE" != "1" ] && [ "$$CI" != "true" ]; then \
+		read -p "Type 'yes' to proceed: " confirm && [ "$$confirm" = "yes" ] || (echo "Aborted." && exit 1); \
+	fi
 	@echo ""
 	@echo "Checking if state bucket needs version cleanup..."
 	@bash scripts/empty_bucket_versions.sh --yes
 	@echo ""
 	@echo "Destroying bootstrap stack..."
-	@cd bootstrap && terraform destroy
+	@cd bootstrap && terraform destroy $(AUTO_APPROVE_FLAG)
 
 smoke:
 	@echo "Running smoke test..."
