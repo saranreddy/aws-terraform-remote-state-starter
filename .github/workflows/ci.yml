@@ -1,0 +1,200 @@
+name: CI
+
+on:
+  push:
+    branches: ["*"]
+  pull_request:
+    branches: [main]
+
+env:
+  TF_VERSION: "1.5.7"
+
+jobs:
+  terraform-validate:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        directory:
+          - bootstrap
+          - environments/dev
+          - environments/stage
+          - environments/prod
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+        working-directory: ${{ matrix.directory }}
+
+      - name: Terraform Init (backend=false)
+        run: terraform init -backend=false
+        working-directory: ${{ matrix.directory }}
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: ${{ matrix.directory }}
+
+  tflint:
+    name: TFLint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: Init TFLint
+        run: tflint --init
+
+      - name: Run TFLint on bootstrap
+        run: tflint --recursive
+        working-directory: bootstrap
+
+      - name: Run TFLint on environments
+        run: tflint --recursive
+        working-directory: environments
+
+      - name: Run TFLint on modules
+        run: tflint --recursive
+        working-directory: modules
+
+  plan:
+    name: Plan (${{ matrix.environment }})
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    strategy:
+      matrix:
+        environment: [dev, stage, prod]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Check for AWS Config
+        id: check_aws
+        run: |
+          if [ -z "${{ secrets.AWS_REGION }}" ]; then
+            echo "configured=false" >> $GITHUB_OUTPUT
+          else
+            echo "configured=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Configure AWS Credentials
+        if: steps.check_aws.outputs.configured == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.GITHUB_PLAN_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Terraform Init
+        if: steps.check_aws.outputs.configured == 'true'
+        run: terraform init -backend-config=backend-${{ matrix.environment }}.hcl
+        working-directory: environments/${{ matrix.environment }}
+
+      - name: Terraform Plan
+        if: steps.check_aws.outputs.configured == 'true'
+        id: plan
+        run: terraform plan -no-color -out=tfplan
+        working-directory: environments/${{ matrix.environment }}
+        continue-on-error: true
+
+      - name: Post Plan Comment
+        if: steps.check_aws.outputs.configured == 'true' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('environments/${{ matrix.environment }}/tfplan.txt', 'utf8');
+            const output = `#### Terraform Plan 📖 \`${{ matrix.environment }}\`
+            
+            <details><summary>Show Plan</summary>
+            
+            \`\`\`terraform
+            ${plan}
+            \`\`\`
+            
+            </details>`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+      - name: Skip Plan (No AWS Config)
+        if: steps.check_aws.outputs.configured == 'false'
+        run: |
+          echo "⚠️  Skipping plan for ${{ matrix.environment }}"
+          echo ""
+          echo "AWS credentials not configured. Set the following repository secrets:"
+          echo "  - AWS_REGION"
+          echo "  - GITHUB_PLAN_ROLE_ARN"
+          echo ""
+          echo "This is expected for fresh template repositories."
+
+  apply-dev:
+    name: Apply (dev)
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Check for AWS Config
+        id: check_aws
+        run: |
+          if [ -z "${{ secrets.AWS_REGION }}" ]; then
+            echo "configured=false" >> $GITHUB_OUTPUT
+          else
+            echo "configured=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Configure AWS Credentials
+        if: steps.check_aws.outputs.configured == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.GITHUB_APPLY_DEV_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Terraform Init
+        if: steps.check_aws.outputs.configured == 'true'
+        run: terraform init -backend-config=backend-dev.hcl
+        working-directory: environments/dev
+
+      - name: Terraform Apply
+        if: steps.check_aws.outputs.configured == 'true'
+        run: terraform apply -auto-approve
+        working-directory: environments/dev
+
+      - name: Skip Apply (No AWS Config)
+        if: steps.check_aws.outputs.configured == 'false'
+        run: |
+          echo "⚠️  Skipping apply for dev"
+          echo ""
+          echo "AWS credentials not configured. Set the following repository secrets:"
+          echo "  - AWS_REGION"
+          echo "  - GITHUB_APPLY_DEV_ROLE_ARN"
+          echo ""
+          echo "This is expected for fresh template repositories."
