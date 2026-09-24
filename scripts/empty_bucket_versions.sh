@@ -1,8 +1,15 @@
 #!/bin/bash
 # Helper script to empty all versions from the state bucket before destroy
 # S3 versioned buckets cannot be destroyed until all versions are deleted
+# Usage: ./empty_bucket_versions.sh [--yes]
 
 set -e
+
+# Check for non-interactive flag
+NON_INTERACTIVE=0
+if [ "$1" = "--yes" ] || [ "$FORCE" = "1" ]; then
+    NON_INTERACTIVE=1
+fi
 
 echo "Checking for state bucket versions to clean up..."
 
@@ -51,11 +58,15 @@ echo ""
 echo "⚠️  WARNING: This will permanently delete all versions in the state bucket!"
 echo "⚠️  This includes all state history for all environments."
 echo ""
-read -p "Type 'yes' to proceed with deletion: " confirm
 
-if [ "$confirm" != "yes" ]; then
-    echo "Aborted."
-    exit 1
+if [ "$NON_INTERACTIVE" -eq 0 ]; then
+    read -p "Type 'yes' to proceed with deletion: " confirm
+    if [ "$confirm" != "yes" ]; then
+        echo "Aborted."
+        exit 1
+    fi
+else
+    echo "Non-interactive mode: proceeding with deletion"
 fi
 
 echo ""

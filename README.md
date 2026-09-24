@@ -145,7 +145,15 @@ make bootstrap
 
 ### 3. Configure Backend for Environments
 
-After bootstrap succeeds, update each environment's backend config with the S3 bucket name:
+After bootstrap succeeds, generate backend configs from the outputs:
+
+```bash
+make backend-configs
+```
+
+This creates `backend-<env>.hcl` files in each environment directory with the correct bucket name, region, and lock table from bootstrap outputs.
+
+**Or manually** edit each environment's backend config:
 
 ```bash
 # Edit environments/dev/backend-dev.hcl
@@ -156,7 +164,7 @@ dynamodb_table = "terraform-state-lock"
 encrypt        = true
 ```
 
-Repeat for `environments/stage/backend-stage.hcl` and `environments/prod/backend-prod.hcl`, changing only the `key` to `stage/terraform.tfstate` and `prod/terraform.tfstate`.
+The stage and prod configs are similar, with only the `key` changing to `stage/terraform.tfstate` and `prod/terraform.tfstate`.
 
 ### 4. Initialize and Apply Dev Environment
 
@@ -345,27 +353,44 @@ GitHub Actions can authenticate to AWS using OIDC instead of storing long-lived 
 ### IAM Roles
 
 **Plan role** (`github-plan`):
-- Read-only access to AWS resources
-- Full access to S3 state bucket and DynamoDB lock table
-- Used by PR plan jobs (any branch)
-- Trust condition: `repo:myorg/myrepo:*`
+- **Can read** workload resources (S3 bucket properties, SSM parameters) for plan refresh
+- **Can read** state from S3 bucket (all environments, read-only)
+- **Can lock** state via DynamoDB (GetItem, PutItem, DeleteItem)
+- **Cannot write** state, workload resources, or other AWS resources
+- **Trust**: `pull_request` events and `ref:refs/heads/main`
+- **Resource scope**: Workload buckets matching `<project>-*-workload-*`, SSM parameters under `/<project>/*`
+
+**Why the plan role can see all environment state:** Terraform plan needs to read the state to detect drift, but it's read-only. It cannot modify state or resources.
 
 **Apply roles per environment** (`github-apply-dev`, `github-apply-stage`, `github-apply-prod`):
-- Full access to S3, SSM, and other resources needed by the workload
-- Full access to S3 state bucket and DynamoDB lock table
-- Trust conditions:
-  - **Dev**: `repo:myorg/myrepo:ref:refs/heads/main` (merges to main branch)
-  - **Stage**: `repo:myorg/myrepo:environment:stage` (GitHub Environment)
-  - **Prod**: `repo:myorg/myrepo:environment:prod` (GitHub Environment)
+- **Can create/destroy** S3 buckets matching `<project>-<env>-workload-*` (versioning, encryption, public access block, tags)
+- **Can create/destroy** SSM parameters under `/<project>/<env>/*`
+- **Can read/write** only its own environment's state key: `<env>/*` in the state bucket
+- **Cannot read/write** other environments' state keys (explicit deny)
+- **Cannot modify** the state bucket itself (versioning, encryption, policy, lifecycle) or delete it (explicit deny)
+- **Cannot modify or delete** the DynamoDB lock table (explicit deny)
+- **Can lock** state via DynamoDB with condition scoped to `<bucket>/<env>/*` lock IDs
+- **Trust conditions**:
+  - **Dev**: `repo:<owner>/<repo>:ref:refs/heads/main` (merges to main branch)
+  - **Stage**: `repo:<owner>/<repo>:environment:stage` (GitHub Environment with required reviewers)
+  - **Prod**: `repo:<owner>/<repo>:environment:prod` (GitHub Environment with required reviewers)
+
+**What each apply role CANNOT do:**
+- Access or modify other environments' resources (different bucket/SSM prefixes)
+- Access or modify other environments' state (explicit deny on S3 state keys)
+- Delete or reconfigure the state bucket or lock table (explicit deny)
+- Access arbitrary S3 buckets or SSM parameters outside the scoped prefixes
+- Pass IAM roles or assume other roles (no IAM permissions)
 
 This scoping means:
-- PR plan jobs cannot apply changes
-- Dev apply only runs on merge to `main`
+- PR plan jobs can refresh state but not apply changes
+- Dev apply only runs on merge to `main` and can only touch dev resources and state
 - Stage and prod apply only run through GitHub Environments with manual approval
+- A compromised dev role cannot delete prod's workload or overwrite prod's state
 
 ### Trust Scoping
 
-The bootstrap stack **never** uses `repo:*` wildcards. Trust is always scoped to your specific repository. If you fork or template this repo, you **must** update `github_owner` and `github_repo` in `bootstrap/terraform.tfvars`, then re-apply bootstrap to create new IAM roles with the correct trust.
+The bootstrap stack **never** uses `repo:*` wildcards. Trust is always scoped to your specific repository and branch/environment. If you fork or template this repo, you **must** update `github_owner` and `github_repo` in `bootstrap/terraform.tfvars`, then re-apply bootstrap to create new IAM roles with the correct trust.
 
 ## Adding a New Environment
 

@@ -1,4 +1,4 @@
-# Plan role: read-only + state access, used for PR plan jobs
+# Plan role: read-only + state read + locking, used for PR plan jobs
 resource "aws_iam_role" "github_plan" {
   name = "${var.project_name}-github-plan"
 
@@ -16,7 +16,11 @@ resource "aws_iam_role" "github_plan" {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
           }
           StringLike = {
-            "token.actions.githubusercontent.com:sub" = "repo:${local.repo_full}:*"
+            # Allow pull_request events and main branch (for plan on push)
+            "token.actions.githubusercontent.com:sub" = [
+              "repo:${local.repo_full}:pull_request",
+              "repo:${local.repo_full}:ref:refs/heads/main"
+            ]
           }
         }
       }
@@ -32,33 +36,36 @@ resource "aws_iam_role_policy" "github_plan" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "ReadOnlyAccess"
+        Sid    = "WorkloadReadAccess"
         Effect = "Allow"
         Action = [
-          "s3:GetObject",
+          "s3:GetBucketVersioning",
+          "s3:GetEncryptionConfiguration",
+          "s3:GetBucketPublicAccessBlock",
+          "s3:GetBucketTagging",
+          "s3:GetBucketLocation",
           "s3:ListBucket",
           "ssm:GetParameter",
           "ssm:GetParameters",
           "ssm:DescribeParameters",
           "ssm:ListTagsForResource"
         ]
-        Resource = "*"
+        Resource = [
+          "arn:aws:s3:::${var.project_name}-*-workload-*",
+          "arn:aws:ssm:*:${local.account_id}:parameter/${var.project_name}/*"
+        ]
       },
       {
-        Sid    = "StateAccess"
+        Sid    = "StateReadOnly"
         Effect = "Allow"
         Action = [
           "s3:GetObject",
-          "s3:PutObject",
-          "s3:DeleteObject"
+          "s3:ListBucket"
         ]
-        Resource = "${aws_s3_bucket.terraform_state.arn}/*"
-      },
-      {
-        Sid      = "StateBucketList"
-        Effect   = "Allow"
-        Action   = "s3:ListBucket"
-        Resource = aws_s3_bucket.terraform_state.arn
+        Resource = [
+          aws_s3_bucket.terraform_state.arn,
+          "${aws_s3_bucket.terraform_state.arn}/*"
+        ]
       },
       {
         Sid    = "StateLocking"
@@ -74,7 +81,7 @@ resource "aws_iam_role_policy" "github_plan" {
   })
 }
 
-# Apply roles per environment: full access scoped to repo + environment/branch
+# Apply roles per environment: scoped access to environment resources only
 resource "aws_iam_role" "github_apply" {
   for_each = toset(var.environments)
   name     = "${var.project_name}-github-apply-${each.key}"
@@ -111,31 +118,58 @@ resource "aws_iam_role_policy" "github_apply" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "FullAccessForEnvironment"
+        Sid    = "S3WorkloadBucketAccess"
         Effect = "Allow"
         Action = [
-          "s3:*",
-          "ssm:*",
-          "iam:GetRole",
-          "iam:PassRole"
+          "s3:CreateBucket",
+          "s3:DeleteBucket",
+          "s3:GetBucketVersioning",
+          "s3:PutBucketVersioning",
+          "s3:GetEncryptionConfiguration",
+          "s3:PutEncryptionConfiguration",
+          "s3:GetBucketPublicAccessBlock",
+          "s3:PutBucketPublicAccessBlock",
+          "s3:GetBucketTagging",
+          "s3:PutBucketTagging",
+          "s3:GetBucketLocation",
+          "s3:ListBucket"
         ]
-        Resource = "*"
+        Resource = "arn:aws:s3:::${var.project_name}-${each.key}-workload-*"
       },
       {
-        Sid    = "StateAccess"
+        Sid    = "SSMParameterAccess"
+        Effect = "Allow"
+        Action = [
+          "ssm:PutParameter",
+          "ssm:DeleteParameter",
+          "ssm:GetParameter",
+          "ssm:GetParameters",
+          "ssm:DescribeParameters",
+          "ssm:AddTagsToResource",
+          "ssm:RemoveTagsFromResource",
+          "ssm:ListTagsForResource"
+        ]
+        Resource = "arn:aws:ssm:*:${local.account_id}:parameter/${var.project_name}/${each.key}/*"
+      },
+      {
+        Sid    = "StateReadWrite"
         Effect = "Allow"
         Action = [
           "s3:GetObject",
-          "s3:PutObject",
-          "s3:DeleteObject"
+          "s3:PutObject"
         ]
-        Resource = "${aws_s3_bucket.terraform_state.arn}/*"
+        Resource = "${aws_s3_bucket.terraform_state.arn}/${each.key}/*"
       },
       {
         Sid      = "StateBucketList"
         Effect   = "Allow"
         Action   = "s3:ListBucket"
         Resource = aws_s3_bucket.terraform_state.arn
+        Condition = {
+          StringLike = {
+            "s3:prefix" = ["${each.key}/*", "${each.key}"]
+          }
+        }
       },
       {
         Sid    = "StateLocking"
@@ -146,6 +180,47 @@ resource "aws_iam_role_policy" "github_apply" {
           "dynamodb:DeleteItem"
         ]
         Resource = aws_dynamodb_table.terraform_lock.arn
+        Condition = {
+          StringLike = {
+            "dynamodb:LeadingKeys" = ["${aws_s3_bucket.terraform_state.id}/${each.key}/*"]
+          }
+        }
+      },
+      {
+        Sid    = "DenyStateBucketChanges"
+        Effect = "Deny"
+        Action = [
+          "s3:DeleteBucket",
+          "s3:PutBucketVersioning",
+          "s3:PutEncryptionConfiguration",
+          "s3:PutBucketPublicAccessBlock",
+          "s3:PutBucketPolicy",
+          "s3:DeleteBucketPolicy",
+          "s3:PutLifecycleConfiguration"
+        ]
+        Resource = aws_s3_bucket.terraform_state.arn
+      },
+      {
+        Sid    = "DenyLockTableChanges"
+        Effect = "Deny"
+        Action = [
+          "dynamodb:DeleteTable",
+          "dynamodb:UpdateTable"
+        ]
+        Resource = aws_dynamodb_table.terraform_lock.arn
+      },
+      {
+        Sid    = "DenyOtherEnvironmentState"
+        Effect = "Deny"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = [
+          for env in var.environments : "${aws_s3_bucket.terraform_state.arn}/${env}/*"
+          if env != each.key
+        ]
       }
     ]
   })

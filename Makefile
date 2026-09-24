@@ -1,4 +1,4 @@
-.PHONY: help doctor bootstrap init-dev init-stage init-prod plan-dev plan-stage plan-prod apply-dev apply-stage apply-prod destroy-dev destroy-stage destroy-prod destroy-bootstrap smoke clean
+.PHONY: help doctor bootstrap backend-configs init-dev init-stage init-prod plan-dev plan-stage plan-prod apply-dev apply-stage apply-prod destroy-dev destroy-stage destroy-prod destroy-bootstrap smoke clean
 
 help:
 	@echo "AWS Terraform Remote State Starter - Makefile targets"
@@ -8,6 +8,7 @@ help:
 	@echo ""
 	@echo "Bootstrap (run once):"
 	@echo "  make bootstrap        - Deploy state backend + OIDC + IAM roles"
+	@echo "  make backend-configs  - Generate backend-*.hcl files from bootstrap outputs"
 	@echo ""
 	@echo "Environment Init (after bootstrap):"
 	@echo "  make init-dev         - Initialize dev with remote backend"
@@ -62,9 +63,12 @@ bootstrap:
 	@echo "✅ Bootstrap complete!"
 	@echo ""
 	@echo "Next steps:"
-	@echo "  1. Update backend config files in environments/*/backend-*.hcl with bucket name"
+	@echo "  1. Run: make backend-configs (generates backend-*.hcl from outputs)"
 	@echo "  2. Run: make init-dev"
 	@echo "  3. Run: make apply-dev"
+
+backend-configs:
+	@bash scripts/generate_backend_configs.sh
 
 init-dev:
 	@echo "Initializing dev environment with remote backend..."
@@ -115,7 +119,7 @@ destroy-bootstrap:
 	@read -p "Type 'yes' to proceed: " confirm && [ "$$confirm" = "yes" ] || (echo "Aborted." && exit 1)
 	@echo ""
 	@echo "Checking if state bucket needs version cleanup..."
-	@bash scripts/empty_bucket_versions.sh
+	@bash scripts/empty_bucket_versions.sh --yes
 	@echo ""
 	@echo "Destroying bootstrap stack..."
 	@cd bootstrap && terraform destroy
