@@ -8,6 +8,32 @@
 
 This shows how Terraform on AWS is run **by a team instead of from one laptop**: each engineer runs the same backend config, state is versioned and locked, and GitHub Actions authenticate through OIDC with scoped IAM roles instead of storing access keys.
 
+## Who This Is For
+
+**This starter is designed for:**
+
+- **Small teams** moving off laptop-local `terraform.tfstate` and wanting shared, locked, versioned state
+- **Startups** that need dev/stage/prod environments with reviewer-gated production deploys
+- **Platform engineers** standardizing how teams start Terraform repositories
+- **Teams** replacing long-lived AWS access keys in CI with OIDC credentials
+- **Solo developers** who want a safe, reproducible setup that will scale when teammates join
+
+**Common scenarios where this pattern fits:**
+- You're running Terraform from laptops and hit "state locked" errors or conflicting changes
+- You store AWS keys in GitHub secrets and want to eliminate that security risk
+- You need separate environments with different approval workflows
+- You want CI to plan on every PR and apply on merge, but don't have existing Terraform automation
+
+**When NOT to use this:**
+
+- **You already use Terraform Cloud, HCP Terraform, Spacelift, or Atlantis** — those platforms provide state management, locking, and CI/CD out of the box
+- **You need multi-account AWS** via Organizations/Control Tower — this is a **single-account pattern**. For multi-account, look at AWS Control Tower with Account Factory for Terraform, or patterns with cross-account roles
+- **You're running throwaway experiments** or learning Terraform basics — local state is simpler
+- **You have complex governance requirements** (audit logs, policy-as-code, drift detection) — evaluate Terraform Cloud or Spacelift for built-in governance
+- **You're managing dozens of Terraform roots** — at that scale, you need workspace management and centralized policy beyond what a template provides
+
+**Single-account scope:** This starter manages resources in one AWS account. If you run separate AWS accounts for dev/stage/prod, you'll need cross-account IAM roles or separate backend buckets per account.
+
 ## Why Remote State?
 
 Running Terraform with local state from your laptop works for solo demos, but teams hit problems fast:
