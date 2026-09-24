@@ -1,0 +1,8 @@
+aws_region    = "us-east-1"
+project_name  = "myproject"
+environment   = "stage"
+bucket_suffix = "unique-12345"
+
+tags = {
+  Team = "Platform"
+}
