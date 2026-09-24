@@ -167,7 +167,7 @@ resource "aws_iam_role_policy" "github_apply" {
         Resource = aws_s3_bucket.terraform_state.arn
         Condition = {
           StringLike = {
-            "s3:prefix" = ["${each.key}/*", "${each.key}"]
+            "s3:prefix" = [each.key, "${each.key}/*"]
           }
         }
       },
