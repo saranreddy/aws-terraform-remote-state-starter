@@ -47,47 +47,9 @@ Running Terraform with local state from your laptop works for solo demos, but te
 
 ## Architecture
 
-```mermaid
-graph TB
-    subgraph "Bootstrap (Local State)"
-        B[Bootstrap Stack]
-        B --> S3[S3 Bucket<br/>Versioned + Encrypted]
-        B --> DDB[DynamoDB Lock Table<br/>On-Demand]
-        B --> OIDC[GitHub OIDC Provider]
-        B --> IAM[IAM Roles<br/>Plan + Apply per Env]
-    end
-    
-    subgraph "Environments (Remote State)"
-        DEV[Dev Environment]
-        STAGE[Stage Environment]
-        PROD[Prod Environment]
-    end
-    
-    subgraph "GitHub Actions"
-        PR[Pull Request] --> PLAN[Plan Jobs<br/>dev/stage/prod]
-        MERGE[Merge to main] --> APPLY_DEV[Apply Dev]
-        MERGE --> APPLY_STAGE[Apply Stage<br/>Manual Approval]
-        MERGE --> APPLY_PROD[Apply Prod<br/>Manual Approval]
-    end
-    
-    DEV -.->|State| S3
-    STAGE -.->|State| S3
-    PROD -.->|State| S3
-    
-    DEV -.->|Lock| DDB
-    STAGE -.->|Lock| DDB
-    PROD -.->|Lock| DDB
-    
-    PLAN -.->|Assume| IAM
-    APPLY_DEV -.->|Assume| IAM
-    APPLY_STAGE -.->|Assume| IAM
-    APPLY_PROD -.->|Assume| IAM
-    
-    style S3 fill:#ff9900
-    style DDB fill:#ff9900
-    style OIDC fill:#6cc644
-    style IAM fill:#6cc644
-```
+![AWS Terraform Remote State Starter Architecture: Platform engineer bootstraps Terraform with local state to create S3 bucket, DynamoDB lock table, GitHub OIDC provider, and IAM roles. Developers open PRs triggering plan jobs across dev/stage/prod environments, then merge to main to apply dev automatically and apply stage/prod sequentially with reviewer approval. All environments use remote state in S3 with DynamoDB locking. GitHub Actions authenticate via OIDC with scoped IAM roles.](docs/architecture.png)
+
+*Diagram generated from [`docs/architecture.py`](docs/architecture.py) (requires `pip install diagrams` and Graphviz; running `python docs/architecture.py` writes `architecture.png` next to the script).*
 
 **Components:**
 
